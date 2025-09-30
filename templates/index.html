@@ -232,6 +232,23 @@
     <div class="sections">
       <div class="section">
         <h2>🆕 Nowe aukcje (od ostatniej wizyty)</h2>
+
+        <div class="stats" id="auction-stats" style="margin-bottom: 20px;">
+          <div class="stat-card">
+            <div class="stat-number" id="auctions-count-before">-</div>
+            <div class="stat-label">Ostatnia liczba</div>
+            <div class="stat-time" id="before-scraper-date" style="font-size: 0.8rem; color: #888; margin-top: 5px;">-
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-number" id="auctions-count-after">-</div>
+            <div class="stat-label">Aktualna liczba</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-number" id="auctions-count-new">-</div>
+            <div class="stat-label">Nowe aukcje</div>
+          </div>
+        </div>
         <div id="new-auctions" class="auction-list">
           <div class="loading">Ładowanie...</div>
         </div>
@@ -258,7 +275,8 @@
 
   <script>
     let refreshInProgress = false;
-    let lastVisitTimestamp = localStorage.getItem('lastVisitTimestamp') || (Date.now() / 1000 - 86400);
+    let lastVisitTimestamp = Date.now() / 1000 - 86400; // domyślnie 24h temu
+    let lastScraperDate = null;
 
 
     async function loadNewAuctions() {
@@ -362,11 +380,42 @@
       btn.disabled = true;
       btn.textContent = '⏳ Pobieranie...';
 
+      // Pobierz liczbę aukcji przed scraperem
+      try {
+        const beforeResponse = await fetch('/api/stats');
+        const beforeStats = await beforeResponse.json();
+        const now = new Date();
+        const timeString = now.toLocaleString('pl-PL');
+
+        document.getElementById('auctions-count-before').textContent = beforeStats.total_auctions;
+        document.getElementById('before-scraper-date').textContent = timeString;
+
+        // Zapisz datę w bazie danych
+        lastScraperDate = timeString;
+        await saveSetting('lastScraperDate', timeString);
+      } catch (error) {
+        console.error('Błąd pobierania statystyk przed:', error);
+      }
+
       try {
         const response = await fetch('/refresh');
         const result = await response.json();
 
         if (result.success) {
+          // Pobierz liczbę aukcji po scraperze
+          try {
+            const afterResponse = await fetch('/api/stats');
+            const afterStats = await afterResponse.json();
+            const beforeCount = parseInt(document.getElementById('auctions-count-before').textContent);
+            const afterCount = afterStats.total_auctions;
+            const newCount = afterCount - beforeCount;
+
+            document.getElementById('auctions-count-after').textContent = afterCount;
+            document.getElementById('auctions-count-new').textContent = newCount;
+          } catch (error) {
+            console.error('Błąd pobierania statystyk po:', error);
+          }
+
           // Odśwież wszystkie dane po zakończeniu scrapera
           await Promise.all([
             loadNewAuctions(),
@@ -405,6 +454,30 @@
     }
 
     async function loadData() {
+      // Załaduj ustawienia z bazy danych
+      await loadSettings();
+
+      // Pobierz liczbę aukcji przy starcie
+      try {
+        const response = await fetch('/api/stats');
+        const stats = await response.json();
+
+        document.getElementById('auctions-count-before').textContent = stats.total_auctions;
+        document.getElementById('auctions-count-after').textContent = stats.total_auctions;
+        document.getElementById('auctions-count-new').textContent = '0';
+
+        // Pokaż zapisaną datę lub aktualną datę
+        if (lastScraperDate) {
+          document.getElementById('before-scraper-date').textContent = lastScraperDate;
+        } else {
+          const now = new Date();
+          const timeString = now.toLocaleString('pl-PL');
+          document.getElementById('before-scraper-date').textContent = timeString;
+        }
+      } catch (error) {
+        console.error('Błąd pobierania statystyk:', error);
+      }
+
       await Promise.all([
         loadNewAuctions(),
         loadWatchedSearches()
@@ -503,7 +576,7 @@
 
         if (result.success) {
           lastVisitTimestamp = result.timestamp;
-          localStorage.setItem('lastVisitTimestamp', lastVisitTimestamp);
+          await saveSetting('lastVisitTimestamp', lastVisitTimestamp.toString());
 
           // Wyczyść listę nowych aukcji
           document.getElementById('new-auctions').innerHTML =
@@ -534,6 +607,44 @@
 
     // Automatyczne odświeżanie co 5 minut
     setInterval(loadData, 300000);
+
+    // Funkcje do pracy z ustawieniami w bazie danych
+    async function loadSettings() {
+      try {
+        // Załaduj lastVisitTimestamp
+        const timestampResponse = await fetch('/api/get_setting/lastVisitTimestamp');
+        const timestampResult = await timestampResponse.json();
+        if (timestampResult.success && timestampResult.value) {
+          lastVisitTimestamp = parseFloat(timestampResult.value);
+        }
+
+        // Załaduj lastScraperDate
+        const dateResponse = await fetch('/api/get_setting/lastScraperDate');
+        const dateResult = await dateResponse.json();
+        if (dateResult.success && dateResult.value) {
+          lastScraperDate = dateResult.value;
+        }
+      } catch (error) {
+        console.error('Błąd ładowania ustawień:', error);
+      }
+    }
+
+    async function saveSetting(key, value) {
+      try {
+        const response = await fetch(`/api/set_setting/${key}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ value: value })
+        });
+        const result = await response.json();
+        return result.success;
+      } catch (error) {
+        console.error('Błąd zapisywania ustawienia:', error);
+        return false;
+      }
+    }
   </script>
 </body>
 

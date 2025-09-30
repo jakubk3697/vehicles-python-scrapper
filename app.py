@@ -39,6 +39,13 @@ def get_db_connection():
         last_check_ts INTEGER
     )
     """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS user_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT,
+        updated_ts INTEGER
+    )
+    """)
     conn.commit()
     
     return conn
@@ -185,6 +192,42 @@ def api_mark_visited():
         'timestamp': current_time,
         'human_time': human_time(current_time)
     })
+
+@app.route('/api/get_setting/<key>')
+def api_get_setting(key):
+    """API - pobierz ustawienie z bazy"""
+    conn = get_db_connection()
+    try:
+        result = conn.execute("SELECT value FROM user_settings WHERE key = ?", (key,)).fetchone()
+        if result:
+            return jsonify({'success': True, 'value': result['value']})
+        else:
+            return jsonify({'success': False, 'value': None})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+    finally:
+        conn.close()
+
+@app.route('/api/set_setting/<key>', methods=['POST'])
+def api_set_setting(key):
+    """API - zapisz ustawienie do bazy"""
+    data = request.get_json()
+    value = data.get('value')
+    
+    conn = get_db_connection()
+    try:
+        current_time = int(time.time())
+        conn.execute("""
+            INSERT OR REPLACE INTO user_settings (key, value, updated_ts)
+            VALUES (?, ?, ?)
+        """, (key, value, current_time))
+        conn.commit()
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+    finally:
+        conn.close()
 
 @app.route('/api/add_watched_search', methods=['POST'])
 def api_add_watched_search():
